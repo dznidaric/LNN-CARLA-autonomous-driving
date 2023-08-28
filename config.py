@@ -27,12 +27,26 @@ DATA_DIR = r"./data"
 
 
 class GlobalConfig:
+    # Data
+    seq_len = 1 # input timesteps
+    img_seq_len = 1
+    pred_len = 4 # future waypoints predicted
+
+    scale = 1 # image pre-processing
     img_resolution = (160, 704)  # (height, width)
     img_width = 320
 
+    camera_pos = [1.3, 0.0, 2.3] #x, y, z mounting position of the camera
+    camera_width = 960 # Camera width in pixel
+    camera_height = 480 # Camera height in pixel
+    camera_fov = 120 #Camera FOV in degree
+    camera_rot_0 = [0.0, 0.0, 0.0] # Roll Pitch Yaw of camera 0 in degree
+    camera_rot_1 = [0.0, 0.0, -60.0] # Roll Pitch Yaw of camera 1 in degree
+    camera_rot_2 = [0.0, 0.0, 60.0] # Roll Pitch Yaw of camera 2 in degree
+
     # Training parameters
     augment = True
-    inv_augment_prob = 0.1  # Probablity that data augmentation is applied is 1.0
+    inv_augment_prob = 0.15
     aug_max_rotation = 20  # degree
 
     def __init__(self, setting="all"):
@@ -63,11 +77,11 @@ class GlobalConfig:
                 for file in root_files:
                     if (file.find("Town02") != -1) or (file.find("Town05") != -1):
                         if not os.path.isfile(os.path.join(DATA_DIR, file)):
-                            print("Val Folder: ", file)
+                            #print("Val Folder: ", file)
                             self.val_data.append(os.path.join(DATA_DIR, town, file))
                             continue
                     if not os.path.isfile(os.path.join(DATA_DIR, file)):
-                        print("Train Folder: ", file)
+                        #print("Train Folder: ", file)
                         self.train_data.append(os.path.join(DATA_DIR, town, file))
         elif setting == "eval":  # No training data needed during evaluation.
             pass

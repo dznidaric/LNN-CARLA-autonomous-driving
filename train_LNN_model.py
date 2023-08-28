@@ -4,15 +4,19 @@ import tensorflow as tf
 from config import GlobalConfig
 from data import CARLA_Data
 
+#physical_devices = tf.config.list_physical_devices("GPU")
+#tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
 
 def main():
     config = GlobalConfig(setting="02_05_withheld")
 
-    train_set = CARLA_Data(root=config.train_data, config=config)
-    val_set = CARLA_Data(root=config.val_data, config=config)
+    train_set = CARLA_Data(root=config.train_data, config=config).create_dataset()
+    val_set = CARLA_Data(root=config.val_data, config=config).create_dataset()
 
-    train_set.labels
-    train_set.images[0].shape
+
+    for images in train_set.take(3):
+        print(images)
 
     """  train_set = train_set.shuffle(1000).batch(32)
     val_set   = val_set.shuffle(1000).batch(32) """
@@ -21,7 +25,6 @@ def main():
 def model():
     # Define the input shapes
     camera_input_shape = (124, 124, 3)
-    lidar_input_shape = (1000, 3)
 
     # Define the camera encoder
     """  camera_encoder = tf.keras.models.Sequential(

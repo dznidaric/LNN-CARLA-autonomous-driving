@@ -1,27 +1,3 @@
-""" 
-@article{Chitta2022PAMI,
-  author = {Chitta, Kashyap and
-            Prakash, Aditya and
-            Jaeger, Bernhard and
-            Yu, Zehao and
-            Renz, Katrin and
-            Geiger, Andreas},
-  title = {TransFuser: Imitation with Transformer-Based Sensor Fusion for Autonomous Driving},
-  journal = {Pattern Analysis and Machine Intelligence (PAMI)},
-  year = {2022},
-} 
-@inproceedings{Prakash2021CVPR,
-  author = {Prakash, Aditya and
-            Chitta, Kashyap and
-            Geiger, Andreas},
-  title = {Multi-Modal Fusion Transformer for End-to-End Autonomous Driving},
-  booktitle = {Conference on Computer Vision and Pattern Recognition (CVPR)},
-  year = {2021}
-} """
-
-""" github repo: https://github.com/autonomousvision/transfuser#evaluation """
-
-
 import os
 import random
 import sys
@@ -42,9 +18,14 @@ class CARLA_Data(tf.data.Dataset):
 
         self.img_resolution = np.array(config.img_resolution)
         self.img_width = np.array(config.img_width)
+        self.scale = np.array(config.scale)
 
         self.augment = np.array(config.augment)
         self.aug_max_rotation = np.array(config.aug_max_rotation)
+        self.inv_augment_prob = np.array(config.inv_augment_prob)
+
+        self.image_shape = np.array([3, self.img_resolution[0], self.img_resolution[1]]).shape
+        self.measurements_shape = np.array([4,]).shape
 
         self.images = []
         self.labels = []
@@ -66,12 +47,8 @@ class CARLA_Data(tf.data.Dataset):
 
                 # ignore the first two and last two frame
                 for seq in range(2, num_seq - self.pred_len - self.seq_len - 2):
-                    # load input seq and pred seq jointly
-                    image = []
-                    label = []
-                    measurement = []
                     # Loads the current (and past) frames (if seq_len > 1)
-                    for idx in range(self.seq_len):
+                    """for idx in range(self.seq_len):
                         image.append(route_dir / "rgb" / ("%04d.png" % (seq + idx)))
                         measurement.append(
                             route_dir / "measurements" / ("%04d.json" % (seq + idx))
@@ -81,196 +58,173 @@ class CARLA_Data(tf.data.Dataset):
                     for idx in range(self.seq_len + self.pred_len):
                         label.append(
                             route_dir / "label_raw" / ("%04d.json" % (seq + idx))
-                        )
+                        )"""
 
-                    self.images.append(image)
+                    """ self.images.append(image)
                     self.labels.append(label)
-                    self.measurements.append(measurement)
+                    self.measurements.append(measurement) """
+                    self.images.append(route_dir / "rgb" / ("%04d.png" % seq))
+                    self.labels.append(route_dir / "label_raw" / ("%04d.json" % seq))
+                    self.measurements.append(
+                        route_dir / "measurements" / ("%04d.json" % seq)
+                    )
 
         # There is a complex "memory leak"/performance issue when using Python objects like lists in a Dataloader that is loaded with multiprocessing, num_workers > 0
         # A summary of that ongoing discussion can be found here https://github.com/pytorch/pytorch/issues/13246#issuecomment-905703662
         # A workaround is to store the string lists as numpy byte objects because they only have 1 refcount.
-        self.images = np.array(self.images).astype(np.string_)
+        """ self.images = np.array(self.images).astype(np.string_)
         self.labels = np.array(self.labels).astype(np.string_)
-        self.measurements = np.array(self.measurements).astype(np.string_)
+        self.measurements = np.array(self.measurements).astype(np.string_) """
 
-    def __len__(self):
-        """Returns the length of the dataset."""
-        return self.images.shape[0]
+    def data_generator(self):
+        images = self.images
+        labels = self.labels
+        measurements = self.measurements
 
-    def __getitem__(self, index):
-        """Returns the item at index idx."""
-        cv2.setNumThreads(
-            0
-        )  # Disable threading because the data loader will already split in threads.
-
-        data = dict()
-
-        images = self.images[index]
-        labels = self.labels[index]
-        measurements = self.measurements[index]
+        len_parameters = len(self.images)
 
         # load measurements
-        loaded_images = []
         loaded_labels = []
-        loaded_measurements = []
 
-        # Because the strings are stored as numpy byte objects we need to convert them back to utf-8 strings
         # Since we also load labels for future timesteps, we load and store them separately
-        for i in range(self.seq_len + self.pred_len):
-            if (not (self.data_cache is None)) and (
-                str(labels[i], encoding="utf-8") in self.data_cache
-            ):
-                labels_i = self.data_cache[str(labels[i], encoding="utf-8")]
-            else:
-                with open(str(labels[i], encoding="utf-8"), "r") as f2:
-                    labels_i = ujson.load(f2)
+        for i in range(len_parameters):
+            """for i in range(self.seq_len + self.pred_len):
+                with open(str(labels[i]), "r", encoding="utf-8") as f2:
+                    loaded_labels.append(ujson.load(f2))
+            labels = loaded_labels"""
 
-                if not self.data_cache is None:
-                    self.data_cache[str(labels[i], encoding="utf-8")] = labels_i
+            with open(str(measurements[i]), "r", encoding="utf-8") as f1:
+                measurement = ujson.load(f1)
 
-            loaded_labels.append(labels_i)
+            image = cv2.imread(str(images[i]), cv2.IMREAD_COLOR)
+            if image is None:
+                print("Error loading file: ", str(images[i], encoding="utf-8"))
 
-        for i in range(self.seq_len):
-            if (
-                not self.data_cache is None
-                and str(measurements[i], encoding="utf-8") in self.data_cache
-            ):
-                measurements_i, images_i = self.data_cache[
-                    str(measurements[i], encoding="utf-8")
-                ]
-                images_i = cv2.imdecode(images_i, cv2.IMREAD_UNCHANGED)
+            """ 
+                IMAGE
+            """
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            image = image / 255.0
+            image = np.array(image, dtype=np.float32)
 
-            else:
-                with open(str(measurements[i], encoding="utf-8"), "r") as f1:
-                    measurements_i = ujson.load(f1)
-
-                images_i = cv2.imread(
-                    str(images[i], encoding="utf-8"), cv2.IMREAD_COLOR
-                )
-                if images_i is None:
-                    print("Error loading file: ", str(images[i], encoding="utf-8"))
-                images_i = scale_image_cv2(
-                    cv2.cvtColor(images_i, cv2.COLOR_BGR2RGB), self.scale
-                )
-
-                if not self.data_cache is None:
-                    # We want to cache the images in png format instead of uncompressed, to reduce memory usage
-                    result, compressed_imgage = cv2.imencode(".png", images_i)
-                    self.data_cache[str(measurements[i], encoding="utf-8")] = (
-                        measurements_i,
-                        compressed_imgage,
-                    )
-
-            loaded_images.append(images_i)
-            loaded_measurements.append(measurements_i)
-
-        labels = loaded_labels
-        measurements = loaded_measurements
-
-        # load image, only use current frame
-        # augment here
-        crop_shift = 0
-        degree = 0
-        rad = np.deg2rad(degree)
-        do_augment = self.augment and random.random() > self.inv_augment_prob
-        if do_augment:
-            degree = (random.random() * 2.0 - 1.0) * self.aug_max_rotation
+            # augmentation
+            crop_shift = 0
+            degree = 0
             rad = np.deg2rad(degree)
-            crop_shift = degree / 60 * self.img_width / self.scale  # we scale first
+            do_augment = (
+                self.augment and random.random() <= self.inv_augment_prob
+            )  # if random number is less than or equal to inv_augment_prob (0.15)
+            if do_augment:
+                degree = (random.random() * 2.0 - 1.0) * self.aug_max_rotation
+                rad = np.deg2rad(degree)
+                crop_shift = degree / 60 * self.img_width / self.scale  # we scale first
 
-        images_i = loaded_images[self.seq_len - 1]
-        images_i = crop_image_cv2(
-            images_i, crop=self.img_resolution, crop_shift=crop_shift
+            image = crop_image_cv2(
+                image, crop=self.img_resolution, crop_shift=crop_shift
+            )
+
+            steer = measurement["steer"]
+            throttle = measurement["throttle"]
+            brake = measurement["brake"]
+            light = measurement["light_hazard"]
+            speed = measurement["speed"]
+            theta = measurement["theta"]
+            x_command = measurement["x_command"]
+            y_command = measurement["y_command"]
+
+            self.image_shape = image.shape
+            # self.measurements_shape = np.array([steer, throttle, brake, light, speed, theta, x_command, y_command]).shape
+            self.measurements_shape = np.array([steer, throttle, brake, light]).shape
+
+            yield {
+                "rgb": image,
+                "measurements": np.array(
+                    [steer, throttle, brake, light], dtype=np.float32
+                ),
+            }
+
+            """ 
+                LABELS
+            """
+            """ # ego car is always the first one in label file
+            ego_id = labels[self.seq_len - 1][0]["id"]  #432
+
+            # only use label of frame 1
+            bboxes = parse_labels(labels[self.seq_len - 1], rad=-rad)
+            waypoints = get_waypoints(labels[self.seq_len - 1 :], self.pred_len + 1)
+            waypoints = transform_waypoints(waypoints)
+
+            # save waypoints in meters
+            filtered_waypoints = []
+            for id in list(bboxes.keys()) + [ego_id]:
+                waypoint = []
+                for matrix, flag in waypoints[id][1:]:
+                    waypoint.append(matrix[:2, 3])
+                filtered_waypoints.append(waypoint)
+            waypoints = np.array(filtered_waypoints)
+
+            label = []
+            for id in bboxes.keys():
+                label.append(bboxes[id])
+            label = np.array(label)
+
+            # padding
+            label_pad = np.zeros((20, 7), dtype=np.float32)
+            ego_waypoint = waypoints[-1]
+
+            # for the augmentation we only need to transform the waypoints for ego car
+            degree_matrix = np.array(
+                [[np.cos(rad), np.sin(rad)], [-np.sin(rad), np.cos(rad)]]
+            )
+            ego_waypoint = (degree_matrix @ ego_waypoint.T).T
+
+            if label.shape[0] > 0:
+                label_pad[: label.shape[0], :] = label
+
+            data["label"] = label_pad
+            data["ego_waypoint"] = ego_waypoint """
+
+            """ 
+            # target points
+            # convert x_command, y_command to local coordinates
+            # taken from LBC code (uses 90+theta instead of theta)
+            ego_theta = (
+                measurements[self.seq_len - 1]["theta"] + rad
+            )  # + rad for augmentation
+            ego_x = measurements[self.seq_len - 1]["x"]
+            ego_y = measurements[self.seq_len - 1]["y"]
+            x_command = measurements[self.seq_len - 1]["x_command"]
+            y_command = measurements[self.seq_len - 1]["y_command"]
+
+            R = np.array(
+                [
+                    [np.cos(np.pi / 2 + ego_theta), -np.sin(np.pi / 2 + ego_theta)],
+                    [np.sin(np.pi / 2 + ego_theta), np.cos(np.pi / 2 + ego_theta)],
+                ]
+            )
+            local_command_point = np.array([x_command - ego_x, y_command - ego_y])
+            local_command_point = R.T.dot(local_command_point)
+
+            data["target_point"] = local_command_point
+
+            data["target_point_image"] = draw_target_point(local_command_point) """
+
+    def _inputs(self):
+        # Return the structure of input elements
+        return ()  # No inputs in this case
+
+    @property
+    def element_spec(self):
+        # Return the structure of elements in the dataset
+        return {
+            "rgb": tf.TensorSpec(shape=(3,160,704), dtype=tf.float32),
+            "measurements": tf.TensorSpec(shape=(4,), dtype=tf.float32)
+        }
+
+    def create_dataset(self):
+        return tf.data.Dataset.from_generator(
+            self.data_generator, output_signature=self.element_spec
         )
-
-        data["rgb"] = images_i
-
-        # ego car is always the first one in label file
-        ego_id = labels[self.seq_len - 1][0]["id"]
-
-        # only use label of frame 1
-        bboxes = parse_labels(labels[self.seq_len - 1], rad=-rad)
-        waypoints = get_waypoints(labels[self.seq_len - 1 :], self.pred_len + 1)
-        waypoints = transform_waypoints(waypoints)
-
-        # save waypoints in meters
-        filtered_waypoints = []
-        for id in list(bboxes.keys()) + [ego_id]:
-            waypoint = []
-            for matrix, flag in waypoints[id][1:]:
-                waypoint.append(matrix[:2, 3])
-            filtered_waypoints.append(waypoint)
-        waypoints = np.array(filtered_waypoints)
-
-        label = []
-        for id in bboxes.keys():
-            label.append(bboxes[id])
-        label = np.array(label)
-
-        # padding
-        label_pad = np.zeros((20, 7), dtype=np.float32)
-        ego_waypoint = waypoints[-1]
-
-        # for the augmentation we only need to transform the waypoints for ego car
-        degree_matrix = np.array(
-            [[np.cos(rad), np.sin(rad)], [-np.sin(rad), np.cos(rad)]]
-        )
-        ego_waypoint = (degree_matrix @ ego_waypoint.T).T
-
-        if label.shape[0] > 0:
-            label_pad[: label.shape[0], :] = label
-
-        data["label"] = label_pad
-        data["ego_waypoint"] = ego_waypoint
-
-        # other measurement
-        # do you use the last frame that already happend or use the next frame?
-        data["steer"] = measurements[self.seq_len - 1]["steer"]
-        data["throttle"] = measurements[self.seq_len - 1]["throttle"]
-        data["brake"] = measurements[self.seq_len - 1]["brake"]
-        data["light"] = measurements[self.seq_len - 1]["light_hazard"]
-        data["speed"] = measurements[self.seq_len - 1]["speed"]
-        data["theta"] = measurements[self.seq_len - 1]["theta"]
-        data["x_command"] = measurements[self.seq_len - 1]["x_command"]
-        data["y_command"] = measurements[self.seq_len - 1]["y_command"]
-
-        # target points
-        # convert x_command, y_command to local coordinates
-        # taken from LBC code (uses 90+theta instead of theta)
-        ego_theta = (
-            measurements[self.seq_len - 1]["theta"] + rad
-        )  # + rad for augmentation
-        ego_x = measurements[self.seq_len - 1]["x"]
-        ego_y = measurements[self.seq_len - 1]["y"]
-        x_command = measurements[self.seq_len - 1]["x_command"]
-        y_command = measurements[self.seq_len - 1]["y_command"]
-
-        R = np.array(
-            [
-                [np.cos(np.pi / 2 + ego_theta), -np.sin(np.pi / 2 + ego_theta)],
-                [np.sin(np.pi / 2 + ego_theta), np.cos(np.pi / 2 + ego_theta)],
-            ]
-        )
-        local_command_point = np.array([x_command - ego_x, y_command - ego_y])
-        local_command_point = R.T.dot(local_command_point)
-
-        data["target_point"] = local_command_point
-
-        data["target_point_image"] = draw_target_point(local_command_point)
-        return data
-
-
-def scale_image(image, scale):
-    (width, height) = (int(image.width // scale), int(image.height // scale))
-    im_resized = image.resize((width, height))
-    return im_resized
-
-
-def scale_image_cv2(image, scale):
-    (width, height) = (int(image.shape[1] // scale), int(image.shape[0] // scale))
-    im_resized = cv2.resize(image, (width, height))
-    return im_resized
 
 
 def crop_image(image, crop=(128, 640), crop_shift=0):
