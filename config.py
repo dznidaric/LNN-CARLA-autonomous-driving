@@ -35,19 +35,27 @@ class GlobalConfig:
     scale = 1 # image pre-processing
     img_resolution = (160, 704)  # (height, width)
     img_width = 320
+    combined_image_shape = (160, 704, 3)
 
-    camera_pos = [1.3, 0.0, 2.3] #x, y, z mounting position of the camera
+    camera_position = [1.3, 0.0, 2.3] #x, y, z mounting position of the camera
     camera_width = 960 # Camera width in pixel
     camera_height = 480 # Camera height in pixel
     camera_fov = 120 #Camera FOV in degree
-    camera_rot_0 = [0.0, 0.0, 0.0] # Roll Pitch Yaw of camera 0 in degree
-    camera_rot_1 = [0.0, 0.0, -60.0] # Roll Pitch Yaw of camera 1 in degree
-    camera_rot_2 = [0.0, 0.0, 60.0] # Roll Pitch Yaw of camera 2 in degree
+    left_camera_rotation  = -60.0
+    right_camera_rotation =  60.0
 
     # Training parameters
     augment = True
     inv_augment_prob = 0.15
     aug_max_rotation = 20  # degree
+
+    temporal_length = 10 # Number of images in the input sequence
+    temporal_stride = 5 # Temporal stride between input images
+
+    train_ratio = 0.8
+
+    epochs = 10
+    batch_size = 12
 
     def __init__(self, setting="all"):
         if setting == "all":  # All towns used for training no validation data

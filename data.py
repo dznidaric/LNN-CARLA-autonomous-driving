@@ -24,12 +24,13 @@ class CARLA_Data(tf.data.Dataset):
         self.aug_max_rotation = np.array(config.aug_max_rotation)
         self.inv_augment_prob = np.array(config.inv_augment_prob)
 
-        self.image_shape = np.array([3, self.img_resolution[0], self.img_resolution[1]]).shape
-        self.measurements_shape = np.array([4,]).shape
+        self.image_shape = (160, 704, 3)
+        self.measurements_shape = (4,)
 
         self.images = []
         self.labels = []
         self.measurements = []
+        self.num_samples = []
 
         for sub_root in tqdm(root, file=sys.stdout):
             sub_root = Path(sub_root)
@@ -43,38 +44,15 @@ class CARLA_Data(tf.data.Dataset):
             ]
             for route in routes:
                 route_dir = sub_root / route
-                num_seq = len(os.listdir(route_dir / "lidar"))
+                num_seq = len(os.listdir(route_dir / "rgb"))
 
+                self.num_samples.append(num_seq - 4)
                 # ignore the first two and last two frame
-                for seq in range(2, num_seq - self.pred_len - self.seq_len - 2):
-                    # Loads the current (and past) frames (if seq_len > 1)
-                    """for idx in range(self.seq_len):
-                        image.append(route_dir / "rgb" / ("%04d.png" % (seq + idx)))
-                        measurement.append(
-                            route_dir / "measurements" / ("%04d.json" % (seq + idx))
-                        )
-
-                    # Additionally load future labels of the waypoints
-                    for idx in range(self.seq_len + self.pred_len):
-                        label.append(
-                            route_dir / "label_raw" / ("%04d.json" % (seq + idx))
-                        )"""
-
-                    """ self.images.append(image)
-                    self.labels.append(label)
-                    self.measurements.append(measurement) """
+                for seq in range(2, num_seq - 2):
                     self.images.append(route_dir / "rgb" / ("%04d.png" % seq))
-                    self.labels.append(route_dir / "label_raw" / ("%04d.json" % seq))
                     self.measurements.append(
                         route_dir / "measurements" / ("%04d.json" % seq)
                     )
-
-        # There is a complex "memory leak"/performance issue when using Python objects like lists in a Dataloader that is loaded with multiprocessing, num_workers > 0
-        # A summary of that ongoing discussion can be found here https://github.com/pytorch/pytorch/issues/13246#issuecomment-905703662
-        # A workaround is to store the string lists as numpy byte objects because they only have 1 refcount.
-        """ self.images = np.array(self.images).astype(np.string_)
-        self.labels = np.array(self.labels).astype(np.string_)
-        self.measurements = np.array(self.measurements).astype(np.string_) """
 
     def data_generator(self):
         images = self.images
@@ -217,7 +195,7 @@ class CARLA_Data(tf.data.Dataset):
     def element_spec(self):
         # Return the structure of elements in the dataset
         return {
-            "rgb": tf.TensorSpec(shape=(3,160,704), dtype=tf.float32),
+            "rgb": tf.TensorSpec(shape=self.image_shape, dtype=tf.float32),
             "measurements": tf.TensorSpec(shape=(4,), dtype=tf.float32)
         }
 
@@ -242,14 +220,11 @@ def crop_image(image, crop=(128, 640), crop_shift=0):
 
     image = np.asarray(image)
     cropped_image = image[start_y : start_y + crop_h, start_x : start_x + crop_w]
-    cropped_image = np.transpose(cropped_image, (2, 0, 1))
     return cropped_image
 
 
 def crop_image_cv2(image, crop=(128, 640), crop_shift=0):
-    """
-    Scale and crop a PIL image, returning a channels-first numpy array.
-    """
+    
     width = image.shape[1]
     height = image.shape[0]
     crop_h, crop_w = crop
@@ -260,7 +235,6 @@ def crop_image_cv2(image, crop=(128, 640), crop_shift=0):
     start_x += int(crop_shift)
 
     cropped_image = image[start_y : start_y + crop_h, start_x : start_x + crop_w]
-    cropped_image = np.transpose(cropped_image, (2, 0, 1))
     return cropped_image
 
 
