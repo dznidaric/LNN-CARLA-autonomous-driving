@@ -180,32 +180,34 @@ def LTC_time_model():
         # command neuron layer
         motor_fanin=4,  # How many incoming synapses has each motor neuron
     )
-    ncp_cell_time = LTCCell(
+    ncp_cell = LTCCell(
         ncp_wiring,
         initialization_ranges={
             # Overwrite some of the initialization ranges
             "w": (0.2, 2.0),
         },
     )
-    time_d_model = Sequential(
-        [
-            InputLayer(input_shape=(None, 160, 704, 3)),
-            TimeDistributed(Conv2D(32, (5, 5), activation="relu")),
-            TimeDistributed(MaxPool2D()),
-            TimeDistributed(Conv2D(64, (5, 5), activation="relu")),
-            TimeDistributed(MaxPool2D()),
-            TimeDistributed(Flatten()),
-            TimeDistributed(Dense(32, activation="relu")),
-            RNN(ncp_cell_time, return_sequences=True),
-            TimeDistributed(Activation("softmax")),
-        ]
-    )
-    time_d_model.compile(
+    model = Sequential(
+    [
+        InputLayer(input_shape=(None, 160, 704, 3)),
+        TimeDistributed(
+            Conv2D(32, (5, 5), activation="relu")
+        ),
+        TimeDistributed(MaxPool2D()),
+        TimeDistributed(
+            Conv2D(64, (5, 5), activation="relu")
+        ),
+        TimeDistributed(MaxPool2D()),
+        TimeDistributed(Flatten()),
+        TimeDistributed(Dense(32, activation="relu")),
+        RNN(ncp_cell, return_sequences=True),
+        TimeDistributed(Activation("softmax")),
+    ])
+    model.compile(
         optimizer=Adam(0.01),
-        loss="sparse_categorical_crossentropy",
+        loss='mse',
     )
-    time_d_model.summary()
-    return time_d_model
+    return model
 
 
 if __name__ == "__main__":

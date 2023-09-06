@@ -1,5 +1,6 @@
 import os
 import random
+import time
 from pathlib import Path
 
 import cv2
@@ -9,7 +10,7 @@ import ujson
 
 
 class CARLA_Data(tf.data.Dataset):
-    def __init__(self, root, config, current_epoch, batch_size=8):
+    def __init__(self, root, config, current_epoch, batch_size=10):
         self.seq_len = np.array(config.seq_len)
         assert config.img_seq_len == 1
 
@@ -22,7 +23,7 @@ class CARLA_Data(tf.data.Dataset):
         self.inv_augment_prob = np.array(config.inv_augment_prob)
 
         self.image_shape = (160, 704, 3)
-        self.measurements_shape = (4,)
+        self.measurements_shape = (5,)
 
         self.batch_size = batch_size
 
@@ -36,6 +37,7 @@ class CARLA_Data(tf.data.Dataset):
         for sub_root in root:
             sub_root = Path(sub_root)
 
+            # list sub-directories in root
             root_files = os.listdir(sub_root)
             routes = [
                 folder
@@ -56,14 +58,12 @@ class CARLA_Data(tf.data.Dataset):
         batch_images = []
         batch_measurements = []
 
-        for video_dir in self.video_dir[self.current_epoch*10:(self.current_epoch+1)*10]:
-            sample_images = []
-            sample_measurements = []
+        count = 0
+
+        for video_dir in self.video_dir:
 
             num_seq = len(os.listdir(video_dir / "rgb"))
 
-            if num_seq - 4 < 10:
-                continue
             for frame in range(2, num_seq - 2):
                 with open(
                     str(video_dir / "measurements" / ("%04d.json" % frame)),
@@ -71,6 +71,10 @@ class CARLA_Data(tf.data.Dataset):
                     encoding="utf-8",
                 ) as f1:
                     measurement = ujson.load(f1)
+
+                if measurement["steer"] < 0.10 or measurement["steer"] < -0.10:
+                    if random.random() > 0.3:
+                        continue
 
                 image = cv2.imread(
                     str(video_dir / "rgb" / ("%04d.png" % frame)), cv2.IMREAD_COLOR
@@ -86,7 +90,6 @@ class CARLA_Data(tf.data.Dataset):
                 """
                 image = image / 255.0
                 image = np.array(image, dtype=np.float32)
-
                 # augmentation
                 crop_shift = 0
                 degree = 0
@@ -119,20 +122,15 @@ class CARLA_Data(tf.data.Dataset):
                 else:
                     stop = 0.0
 
-                sample_images.append(image)
-                sample_measurements.append(np.array([steer, throttle, brake, light, stop]))
 
-                if len(sample_images) == self.temporal_length:
-                    # add samples to batch
-                    batch_images.append(sample_images)
-                    batch_measurements.append(sample_measurements)
-                    sample_images = []
-                    sample_measurements = []
-                    if len(batch_images) == self.batch_size:
-                        
-                        yield tf.stack(batch_images), tf.stack(batch_measurements)
-                        batch_images = []
-                        batch_measurements = []
+                batch_images.append(image)  # Append the image to the batch_images list
+                count += 1
+                batch_measurements.append(np.array([steer, throttle, brake, light, stop]))
+                if len(batch_images) == self.batch_size:
+                    print(np.array(batch_images).shape)
+                    yield tf.stack(np.array(batch_images)), tf.stack(batch_measurements)
+                    batch_images = []
+                    batch_measurements = []
 
 
     def _inputs(self):
@@ -146,13 +144,12 @@ class CARLA_Data(tf.data.Dataset):
             tf.TensorSpec(
                 shape=(
                     self.batch_size,
-                    self.temporal_length,
                 )
                 + self.image_shape,
                 dtype=tf.float32,
             ),
             tf.TensorSpec(
-                shape=(self.batch_size, self.temporal_length, 5), dtype=tf.float32
+                shape=(self.batch_size, 5), dtype=tf.float32
             )
         )
 
