@@ -1,5 +1,7 @@
+Carla/64_batched_data_town05/
 data/
-
+imitation_learning_files/
 __pycache__/
-
 logs/
+
+Lane_model/64_batched_data_town05/
