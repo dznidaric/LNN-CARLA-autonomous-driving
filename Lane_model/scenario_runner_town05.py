@@ -3,12 +3,11 @@ import math
 import os
 import random
 import sys
-import time
 from queue import Empty, Queue
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
-from constants import INPUT_SHAPE
 from kerasncp.tf import LTCCell
 from kerasncp.wirings import NCP
 from ncps.tf import LTC
@@ -48,7 +47,7 @@ WIDTH = 640
 HEIGHT_REQUIRED_PORTION = 0.4 #bottom share, e.g. 0.1 is take lowest 10% of rows
 WIDTH_REQUIRED_PORTION = 0.5
 
-# image crop calcs  - same as in model build
+# image crop - same as in model input
 height_from = int(HEIGHT * (1 -HEIGHT_REQUIRED_PORTION))
 width_from = int((WIDTH - WIDTH * WIDTH_REQUIRED_PORTION) / 2)
 width_to = width_from + int(WIDTH_REQUIRED_PORTION * WIDTH)
@@ -61,11 +60,11 @@ org2 = (30, 50)
 fontScale = 0.5
 # white color
 color = (255, 255, 255)
-# Line thickness of 2 px
+# Line thickness
 thickness = 1
 
 
-model = load_model("Carla/checkpoints/cnn_ncp_model-0.002478.h5", custom_objects={"LTCCell": LTCCell},compile=False)
+model = load_model("Lane_model/models/ltc_model-0.017563.h5", custom_objects={"LTCCell": LTCCell},compile=False)
 model.compile()
 
 
@@ -75,9 +74,6 @@ def sensor_callback(sensor_data, sensor_queue, sensor_name):
     sensor_queue.put((image, sensor_name))
 
 
-sensor_list = []
-
-
 def camera_rgb_install():
     camera_transform = carla.Transform(
             carla.Location(x=CAMERA_POS_X, z=CAMERA_POS_Z)
@@ -85,7 +81,6 @@ def camera_rgb_install():
     camera_blueprint = world.get_blueprint_library().find("sensor.camera.rgb")
     camera_blueprint.set_attribute("image_size_x", '640')
     camera_blueprint.set_attribute("image_size_y", '360')
-    camera_blueprint.set_attribute("fov", '110')
     camera = world.spawn_actor(
         camera_blueprint, camera_transform, attach_to=ego_vehicle
     )
@@ -106,6 +101,7 @@ def maintain_speed(s):
         return 0.8
     else:
         return 0.3
+
 
 def predict_angle(im):
     # tweaks for prediction
@@ -130,12 +126,14 @@ def predict_angle(im):
 actor_list = []
 
 client = carla.Client("localhost", 2000)
-client.set_timeout(3.0)
+client.set_timeout(10.0)
+client.load_world("Town05")
+
 
 # Once we have a client we can retrieve the world that is currently running.
-
-#world = client.load_world("Town05")
 world = client.get_world()
+
+#world.set_weather(carla.WeatherParameters.WetNoon)
 
 try:
     # We need to save the settings to be able to recover them at the end
@@ -147,38 +145,32 @@ try:
     traffic_manager.set_synchronous_mode(True)
 
     # We set CARLA syncronous mode
-    settings.fixed_delta_seconds = 0.05  # Fixed time-step == 10 FPS (1 / 0,1)
+    settings.fixed_delta_seconds = 0.05
     settings.synchronous_mode = True
     world.apply_settings(settings)
 
     sensor_queue = Queue()
 
-    # Retrieve the spectator object
     spectator = world.get_spectator()
 
     blueprint_library = world.get_blueprint_library()
 
-    # Set the spectator with an empty transform
-    # spectator.set_transform(carla.Transform())
-
-    # This will set the spectator at the origin of the map, with 0 degrees
-    # pitch, yaw and roll - a good way to orient yourself in the map
 
     vehicle_blueprints = blueprint_library.filter("*vehicle*")
 
+    town_map = world.get_map()
     good_roads = [37]
-    spawn_points = world.get_map().get_spawn_points()
+    spawn_points = town_map.get_spawn_points()
     good_spawn_points = []
     for point in spawn_points:
-        this_waypoint = world.get_map().get_waypoint(point.location,project_to_road=True, lane_type=(carla.LaneType.Driving))
+        this_waypoint = town_map.get_waypoint(point.location,project_to_road=True, lane_type=(carla.LaneType.Driving))
         if this_waypoint.road_id in good_roads:
             good_spawn_points.append(point)
 
-    start_point = random.choice(good_spawn_points)
     
-    spawn_point_selected = start_point
+    start_point = random.choice(good_spawn_points)
     ego_vehicle = world.spawn_actor(
-        blueprint_library.filter("etron")[0], spawn_point_selected
+        blueprint_library.filter("etron")[0], start_point
     )
     actor_list.append(ego_vehicle)
 
@@ -191,16 +183,65 @@ try:
             npc_vehicle.set_autopilot(True)
             actor_list.append(npc_vehicle) """
 
-    """ postavljanje senzora na auto """
+
+    sensor_list = []
     # kamera RGB
     camera_rgb_install()
 
     camera_bp = world.get_blueprint_library().find("sensor.camera.rgb")
+    x_pos = 0
+    y_pos = 0
+    print(ego_vehicle.get_transform().rotation.yaw)
+    if ego_vehicle.get_transform().rotation.yaw == 0.0:
+        x_pos = -5
+    else:
+        y_pos = -5
+
+        
     camera_transform = carla.Transform(
-        carla.Location(x=0, z=25),
-        carla.Rotation(pitch=-90, yaw=spawn_point_selected.rotation.yaw * 90),
+        carla.Location(x=x_pos,y=y_pos, z=4),
+        carla.Rotation(pitch=-20, yaw=ego_vehicle.get_transform().rotation.yaw),
     )
+    camera_bp.set_attribute("image_size_x", '640')
+    camera_bp.set_attribute("image_size_y", '360')
     camera = world.spawn_actor(camera_bp, camera_transform, attach_to=ego_vehicle)
+    camera.listen(lambda image: sensor_callback(image, sensor_queue, "3rd person camera"))
+    sensor_list.append(camera)
+
+    distance_traveled = 0.0
+    lane_crossings = 0
+    collisions = 0
+    previous_lane_id = None
+
+    time_steps = []
+    distances = []
+    crossings = []
+    collision_count = []
+
+    # Lane invasion sensor
+    bp = world.get_blueprint_library().find('sensor.other.lane_invasion')
+    sensor = world.spawn_actor(bp, carla.Transform(), attach_to=ego_vehicle)
+    sensor.listen(lambda event: on_invasion(event))
+    
+    def on_invasion(event):
+        global lane_crossings
+        # Handle lane invasion event here
+        lane_crossings += 1
+        print("Lane invasion detected:", event)
+
+    # Collision sensor
+    coll_bp = world.get_blueprint_library().find('sensor.other.collision')
+    coll_sensor = world.spawn_actor(coll_bp, carla.Transform(), attach_to=ego_vehicle)
+    coll_sensor.listen(lambda event: on_collision(event))
+
+    def on_collision(event):
+        global collisions
+        # Handle collision event here
+        collisions += 1
+        cv2.imwrite('collision_%{collisions}.jpg',np.array(event.frame))
+        print("Collision detected:", event)
+
+
 
     while True:
     # Carla Tick
@@ -225,12 +266,27 @@ try:
             acceleration = round(math.sqrt(a.x**2 + a.y**2 + a.z**2),1)
             estimated_throttle = maintain_speed(speed)
 
-            #cv2.imwrite(f"images/image_{int(time.time())}.png", camera_frame)
+            location = ego_vehicle.get_location()
+            previous_location = location
+            if previous_location:
+                distance_traveled += location.distance(previous_location)
+
+
+            time_steps.append(world.get_snapshot().timestamp.elapsed_seconds)
+            distances.append(distance_traveled)
+            crossings.append(lane_crossings)
+            collision_count.append(collisions)
             
             ego_vehicle.apply_control(
                 carla.VehicleControl(steer=-predicted_angle, throttle=estimated_throttle)
             )
-            cv2.imshow('RGB Camera',image)
+            #cv2.imshow('RGB Camera',image)
+
+            camera_3rd = sensor_queue.get(True, 1.0)
+
+            if(camera_3rd[0] is not None):
+                cv2.imshow('3rd person',np.array(camera_3rd[0]))
+            
 
         except Empty:
             print("Some of the sensor information is missed")
@@ -242,4 +298,25 @@ finally:
         actor.destroy()
     for sensor in world.get_actors().filter('*sensor*'):
         sensor.destroy()
+
+
+    fig, (ax1) = plt.subplots(1, 1, figsize=(10, 12))
+
+    # Plot lane crossings
+    ax1.plot(time_steps, crossings, label='Prijelazi preko crte', color='orange')
+    ax1.set_xlabel('Vrijeme (s)')
+    ax1.set_ylabel('Broj prijelaza preko crte')
+    ax1.legend(loc='upper left')
+
+    # Add number of collisions to the plot
+    ax1.twinx()  # Create a twin y-axis
+    ax1.plot(time_steps, collision_count, label='Sudari', color='red')
+    ax1.set_ylabel('Broj sudara')
+    ax1.legend(loc='upper right')
+
+    ax1.grid(True)
+
+    # Show the plot
+    plt.tight_layout()
+    plt.show()
     print("done.")

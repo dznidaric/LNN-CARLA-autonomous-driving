@@ -5,8 +5,8 @@ TEST_SIZE = 0.2
 RANDOM_STATE = 42
 
 BATCH_SIZE = 64
-NB_EPOCHS = 100
-LR = 0.01  # Since trains the model to the best val_loss in 10 epochs (model starts overfitting)
+NB_EPOCHS = 1000
+LR = 5e-06  # Since trains the model to the best val_loss in 10 epochs (model starts overfitting)
 VERBOSITY = 1
 
 INPUT_SHAPE = (360, 640)  # Image input shape

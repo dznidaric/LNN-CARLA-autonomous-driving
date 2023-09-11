@@ -1,10 +1,10 @@
 #from CARLA camera tutorial on YouTube
 # this approach make the camera image available with for a simple loop
 
-import math
 import os
 import random
 import time
+from queue import Empty, Queue
 
 import cv2
 import numpy as np
@@ -37,9 +37,32 @@ width_to = width_from + int(WIDTH_REQUIRED_PORTION * WIDTH)
 good_roads = [12, 34, 35, 36, 37, 38, 1201, 1236, 2034, 2035, 2343, 2344]
 
 
+def sensor_callback(sensor_data, sensor_queue, sensor_name):
+
+    image = np.reshape(np.copy(sensor_data.raw_data),(sensor_data.height,sensor_data.width,4))
+    sensor_queue.put((image, sensor_name))
+
+
+def camera_rgb_install():
+    camera_transform = carla.Transform(
+            carla.Location(x=CAMERA_POS_X, z=CAMERA_POS_Z)
+        )
+    camera_blueprint = world.get_blueprint_library().find("sensor.camera.rgb")
+    camera_blueprint.set_attribute("image_size_x", '640')
+    camera_blueprint.set_attribute("image_size_y", '360')
+    camera = world.spawn_actor(
+        camera_blueprint, camera_transform, attach_to=ego_vehicle
+    )
+    
+    camera.listen(lambda image: sensor_callback(image, sensor_queue, "camera"))
+    actor_list.append(camera)
+    sensor_list.append(camera)
+
+actor_list = []
+
 # connect to sim
 client = carla.Client('localhost', 2000)
-client.set_timeout(15)
+client.set_timeout(10)
 
 # load Town5 map
 client.load_world('Town05') 
@@ -60,18 +83,9 @@ try:
     settings.fixed_delta_seconds = 0.05
     world.apply_settings(settings)
 
-    # pick a car model - Tesla M3
-    bp_lib = world.get_blueprint_library()
-    vehicle_bp = bp_lib.filter('etron')
+    sensor_queue = Queue()
 
     town_map = world.get_map()
-
-    # optional - get all intersections to avoid cutting images near them
-    junction_list = []
-    waypoint_list = town_map.generate_waypoints(2.0)
-    for x in waypoint_list:
-        if x.get_junction() is not None:
-            junction_list.append(x.transform.location)
                     
     #limit spawn points to highways
     spawn_points = town_map.get_spawn_points()
@@ -88,25 +102,18 @@ try:
         if w[0].road_id in good_roads:
             good_lanes.append(w)        
 
-    transform = random.choice(good_spawn_points)
-    ego_vehicle = world.try_spawn_actor(vehicle_bp[0], transform)
+    blueprint_library = world.get_blueprint_library()
+    vehicle_blueprints = blueprint_library.filter("*vehicle*")
 
-    #setting RGB Camera
-    camera_bp = bp_lib.find('sensor.camera.rgb')
-    camera_bp.set_attribute('image_size_x', '640') 
-    camera_bp.set_attribute('image_size_y', '360')
+    start_point = random.choice(good_spawn_points)
+    ego_vehicle = world.spawn_actor(
+        blueprint_library.filter("etron")[0], start_point
+    )
+    actor_list.append(ego_vehicle)
 
-    camera_init_trans = carla.Transform(carla.Location(z=CAMERA_POS_Z,x=CAMERA_POS_X))
-    camera = world.spawn_actor(camera_bp,camera_init_trans,attach_to=ego_vehicle)
-
-    def camera_callback(image,data_dict):
-        data_dict['image'] = np.reshape(np.copy(image.raw_data),(image.height,image.width,4))
-
-    image_w = camera_bp.get_attribute('image_size_x').as_int()
-    image_h = camera_bp.get_attribute('image_size_y').as_int()
-
-    camera_data = {'image': np.zeros((image_h,image_w,4))}
-    camera.listen(lambda image: camera_callback(image,camera_data))
+    sensor_list = []
+    # kamera RGB
+    camera_rgb_install()
 
     #main loop 
     quit = False
@@ -119,27 +126,27 @@ try:
         if quit:
             break
         for wp in lane[0].next_until_lane_end(20):
-            transform = wp.transform
-            ego_vehicle.set_transform(wp.transform)
-            time.sleep(2) #these delays seem to be necessary for teh car to take the position before a shot is taken
-            initial_yaw = wp.transform.rotation.yaw
-            # do multiple shots of straight direction
+            start_point = wp.transform
+            ego_vehicle.set_transform(start_point)
+            time.sleep(2)
+            initial_yaw = start_point.rotation.yaw
+            
             for i in range(5):
-                # Carla Tick
                 world.tick()
                 
-                trans = wp.transform
+                trans = start_point
                 angle_adj = random.randrange(-YAW_ADJ_DEGREES, YAW_ADJ_DEGREES, 1)
                 trans.rotation.yaw = initial_yaw +angle_adj 
                 ego_vehicle.set_transform(trans)
-                time.sleep(1)  #these delays seem to be necessary for teh car to take the position before a shot is taken
+                time.sleep(1)
                 if cv2.waitKey(1) == ord('q'):
                     quit = True
                     break
-                img = camera_data['image']
+                
+                s_frame = sensor_queue.get(True, 1.0)
+                image = s_frame[0]
                 
                 actual_angle = ego_vehicle.get_transform().rotation.yaw - initial_yaw
-                #fixing values like 361.5 to make them close to zero
                 if actual_angle <-180:
                     actual_angle +=360
                 elif actual_angle >180:
@@ -154,7 +161,6 @@ try:
                 canny = cv2.Canny(np.uint8(image),50,150)
                 images.append(canny[:, :, None] / 255)
 
-                time_grab = time.time_ns()
                 if(len(images) == 64):
                     try:
                         np.save(f'{path}/images/64_images_{num_batches}', np.array(images))
@@ -167,14 +173,12 @@ try:
                     images = []
                     angles = []
                     
-                #cv2.imwrite('_out_ang/%06d_%s.png' % (time_grab, actual_angle), img_gry)
                 #old way to screen - cv2.imshow('RGB Camera',img)
 
 finally:
     #clean up
     cv2.destroyAllWindows()
-    camera.stop()
-    for actor in world.get_actors().filter('*ego_vehicle*'):
+    for actor in actor_list:
         actor.destroy()
     for sensor in world.get_actors().filter('*sensor*'):
         sensor.destroy()

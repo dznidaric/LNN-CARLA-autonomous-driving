@@ -4,6 +4,7 @@ from glob import glob  # Finds all path names matching specified pattern
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
+from batch_data_generator import BatchDataGenerator
 from constants import (
     BATCH_SIZE,
     LR,
@@ -14,12 +15,11 @@ from constants import (
     TRAIN_LABELS_DIR,
     VERBOSITY,
 )
-from custom_data_generator import CustomDataGenerator
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.callbacks import ModelCheckpoint, TensorBoard
 from tensorflow.keras.optimizers import Adam
 
-from models import cnn_ncp_model
+from models import ltc_model
 
 # Get the HDF5 sunny camera and log files
 cam_files = sorted(glob(TRAIN_DATA_DIR))
@@ -34,14 +34,14 @@ X_train, X_val, y_train, y_val = train_test_split(
 """ train_gen = DataGenerator(X_train, y_train)
 val_gen = DataGenerator(X_val, y_val) """
 
-train_gen = CustomDataGenerator(X_train, y_train, batch_size=BATCH_SIZE, normalize_labels=True)
-val_gen = CustomDataGenerator(X_val, y_val, batch_size=BATCH_SIZE, normalize_labels=True)
+train_gen = BatchDataGenerator(X_train, y_train, batch_size=BATCH_SIZE, normalize_labels=True)
+val_gen = BatchDataGenerator(X_val, y_val, batch_size=BATCH_SIZE, normalize_labels=True)
 
 # Store architecture function references and model names in a dictionary.
 # This dictionary is utilised to get the necessary model from the parsed command line arguments.
-arch_dict = {"ncp": [cnn_ncp_model, "cnn_ncp", "CNN-NCP"]}
+arch_dict = {"ltc": [ltc_model, "ltc", "CNN_LTC"]}
 
-model, model_name, model_name_plot = arch_dict["ncp"]
+model, model_name, model_name_plot = arch_dict["ltc"]
 
 # Initialise the optimiser
 optimizer = Adam(learning_rate=LR)
@@ -50,7 +50,7 @@ optimizer = Adam(learning_rate=LR)
 model = model()
 
 model.compile(
-    loss="mse", optimizer=optimizer, metrics=["mean_squared_error"]
+    loss="mean_squared_error", optimizer=optimizer, metrics=["mean_squared_error"]
 )
 
 
@@ -59,7 +59,7 @@ cps_path = f"models/{model_name}_model" + "-{val_loss:03f}.h5"
 # Create a Keras 'ModelCheckpoint' callback to save the best model
 checkpoint = ModelCheckpoint(
     cps_path,
-    monitor="val_loss",
+    monitor="val_mean_squared_error",
     verbose=VERBOSITY,
     save_best_only=True,
     mode="auto",
